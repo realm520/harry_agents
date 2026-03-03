@@ -1,0 +1,37 @@
+[feishu]
+app_id = "cli_xxxxxxxxxxxxxx"
+app_secret = "xxxxxxxxxxxxxxxxxxxxxx"
+# 机器人所在群组的 chat_id（接受需求的频道）
+intake_chat_id = "oc_xxxxxxxxxxxxxxxxxxxxxx"
+# 报警/确认通知的用户 open_id
+notify_user_id = "ou_xxxxxxxxxxxxxxxxxxxxxx"
+verification_token = "xxxxxxxxxxxxxxxxxxxxxx"
+encrypt_key = ""
+
+[claude]
+model = "claude-sonnet-4-6"
+# 可选 claude-opus-4-6（更强，更贵）
+max_tokens = 8192
+
+[project]
+# 目标代码仓库的绝对路径（Dev/Test Agent 操作该目录）
+workspace_path = "/path/to/your/project"
+# 运行测试的命令（来自 Makefile）
+test_command = "make test"
+# 部署命令
+deploy_command = "git push origin main"
+# 最大测试重试次数
+max_test_retries = 3
+
+[memory]
+# 记忆文件根目录
+base_path = "./memory"
+# ChromaDB 持久化目录
+chroma_path = "./memory/chroma"
+# 最多召回的记忆条数
+recall_top_k = 5
+
+[logging]
+level = "INFO"
+# 日志文件路径
+file = "./logs/agent.log"
