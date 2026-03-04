@@ -2,6 +2,7 @@
  * 主入口：启动飞书机器人 + Orchestrator
  */
 
+import 'dotenv/config';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig } from './config.js';
