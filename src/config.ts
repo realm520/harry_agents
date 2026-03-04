@@ -75,7 +75,7 @@ export function loadConfig(configPath = 'config.toml'): AppConfig {
     blackbox: {
       api_key: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.api_key ?? process.env.BLACKBOX_API_KEY ?? '',
       endpoint: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.endpoint ?? 'https://api.blackbox.ai/chat/completions',
-      model: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.model ?? 'deepseek-ai/DeepSeek-V3',
+      model: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.model ?? 'blackboxai/deepseek/deepseek-chat-v3-0324',
       timeout_ms: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.timeout_ms ?? 10000,
     },
     project: {
