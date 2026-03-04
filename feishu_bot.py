@@ -1,6 +1,6 @@
 """
-飞书机器人集成
-- 使用 lark-oapi 接收 WebSocket 事件
+Lark 机器人集成（HTTP 推送模式）
+- 使用 aiohttp 接收 Lark 事件推送
 - 发送文本消息和卡片消息（用于确认按钮）
 - 解析用户命令（/deploy, /cancel, /status）
 """
@@ -9,7 +9,6 @@ import asyncio
 import logging
 import json
 import re
-import threading
 from typing import TYPE_CHECKING
 
 import lark_oapi as lark
@@ -17,6 +16,7 @@ from lark_oapi.api.im.v1 import (
     CreateMessageRequest,
     CreateMessageRequestBody,
 )
+from aiohttp import web
 import toml
 
 if TYPE_CHECKING:
@@ -24,22 +24,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 编译好的命令正则（类级常量，避免重复编译）
-_RE_DEPLOY  = re.compile(r"^/deploy\s+(\S+)",        re.IGNORECASE)
-_RE_CANCEL  = re.compile(r"^/cancel\s+(\S+)\s*(.*)", re.IGNORECASE)
-_RE_STATUS  = re.compile(r"^/status$",               re.IGNORECASE)
-_RE_AT      = re.compile(r"@\S+\s*")
+_RE_DEPLOY = re.compile(r"^/deploy\s+(\S+)",        re.IGNORECASE)
+_RE_CANCEL = re.compile(r"^/cancel\s+(\S+)\s*(.*)", re.IGNORECASE)
+_RE_STATUS = re.compile(r"^/status$",               re.IGNORECASE)
+_RE_AT     = re.compile(r"@\S+\s*")
 
 
 class FeishuBot:
     """
-    飞书机器人。接收消息 → 调用 Orchestrator → 回复消息。
+    Lark 机器人。接收消息 → 调用 Orchestrator → 回复消息。
 
-    支持的命令（在飞书群中 @机器人 发送）：
-    - 普通文本 → 启动新任务
-    - `/deploy <task_id>` → 确认部署
-    - `/cancel <task_id> [原因]` → 取消任务
-    - `/status` → 查询当前任务状态
+    支持的命令（在 Lark 群中 @机器人 发送）：
+    - 普通文本          → 启动新任务
+    - /deploy <task_id> → 确认部署
+    - /cancel <task_id> → 取消任务
+    - /status           → 查询当前任务状态
     """
 
     def __init__(self, config_path: str = "config.toml"):
@@ -48,6 +47,7 @@ class FeishuBot:
 
         self._app_id     = feishu_cfg["app_id"]
         self._app_secret = feishu_cfg["app_secret"]
+        self._port       = feishu_cfg.get("port", 8765)
 
         self._lark_client = (
             lark.Client.builder()
@@ -58,69 +58,72 @@ class FeishuBot:
         )
 
         self._orchestrator: "Orchestrator | None" = None
-        # 专用事件循环在独立线程中运行，避免 asyncio.run() 每次创建新循环
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-        self._loop_thread.start()
 
     def set_orchestrator(self, orchestrator: "Orchestrator"):
         self._orchestrator = orchestrator
 
     # ------------------------------------------------------------------ #
-    # 启动（WebSocket 长连）
+    # 启动（HTTP 服务器）
     # ------------------------------------------------------------------ #
 
     def start(self):
-        """启动飞书 WebSocket 事件监听（阻塞）"""
-        event_handler = (
-            lark.EventDispatcherHandler.builder("", "")
-            .register_p2_im_message_receive_v1(self._on_message_receive)
-            .build()
-        )
-        cli = lark.ws.Client(
-            self._app_id,
-            self._app_secret,
-            event_handler=event_handler,
-            log_level=lark.LogLevel.INFO,
-        )
-        logger.info("[FeishuBot] 启动 WebSocket 长连...")
-        cli.start()
+        """启动 HTTP 事件服务器（阻塞）"""
+        app = web.Application()
+        app.router.add_post("/", self._handle_http_event)
+        logger.info(f"[FeishuBot] 启动 HTTP 服务器，监听端口 {self._port}...")
+        web.run_app(app, port=self._port, access_log=None)
 
     # ------------------------------------------------------------------ #
     # 事件处理
     # ------------------------------------------------------------------ #
 
-    def _on_message_receive(self, data: lark.im.v1.P2ImMessageReceiveV1):
-        """收到飞书消息时的同步回调 —— 向专用事件循环提交协程，不阻塞 WebSocket 线程。"""
+    async def _handle_http_event(self, request: web.Request) -> web.Response:
+        """处理 Lark HTTP 推送事件"""
         try:
-            event = data.event
-            msg   = event.message
+            body = await request.json()
+        except Exception:
+            return web.Response(status=400)
 
-            if msg.message_type != "text":
+        # URL 验证（首次配置时 Lark 发送 challenge）
+        if body.get("type") == "url_verification":
+            challenge = body.get("challenge", "")
+            logger.info(f"[FeishuBot] URL 验证通过")
+            return web.Response(
+                text=json.dumps({"challenge": challenge}),
+                content_type="application/json",
+            )
+
+        # 消息事件
+        header = body.get("header", {})
+        if header.get("event_type") == "im.message.receive_v1":
+            asyncio.ensure_future(self._handle_message_event(body.get("event", {})))
+
+        return web.Response(text="{}", content_type="application/json")
+
+    async def _handle_message_event(self, event: dict):
+        """解析消息事件并分发"""
+        try:
+            msg = event.get("message", {})
+
+            if msg.get("message_type") != "text":
                 return
 
-            content_dict = json.loads(msg.content)
+            content_dict = json.loads(msg.get("content", "{}"))
             text = _RE_AT.sub("", content_dict.get("text", "")).strip()
             if not text:
                 return
 
-            chat_id    = msg.chat_id
-            message_id = msg.message_id
-            sender_id  = event.sender.sender_id.open_id
+            chat_id    = msg.get("chat_id", "")
+            message_id = msg.get("message_id", "")
+            sender_id  = event.get("sender", {}).get("sender_id", {}).get("open_id", "")
 
             logger.info(f"[FeishuBot] 收到消息: chat={chat_id}, text={text[:80]}")
 
-            # 提交到专用事件循环（非阻塞）
-            asyncio.run_coroutine_threadsafe(
-                self._dispatch(chat_id, message_id, sender_id, text),
-                self._loop,
-            )
+            await self._dispatch(chat_id, message_id, sender_id, text)
         except Exception as e:
             logger.exception(f"[FeishuBot] 消息处理异常: {e}")
 
-    async def _dispatch(
-        self, chat_id: str, message_id: str, sender_id: str, text: str
-    ):
+    async def _dispatch(self, chat_id: str, message_id: str, sender_id: str, text: str):
         """根据文本内容分发到对应处理器"""
         if not self._orchestrator:
             logger.error("[FeishuBot] Orchestrator 未初始化")
@@ -168,7 +171,10 @@ class FeishuBot:
                 )
                 .build()
             )
-            resp = self._lark_client.im.v1.message.create(request)
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(
+                None, lambda: self._lark_client.im.v1.message.create(request)
+            )
             if not resp.success():
                 logger.error(f"[FeishuBot] 发送消息失败: {resp.msg}")
         except Exception as e:
@@ -220,7 +226,10 @@ class FeishuBot:
                 )
                 .build()
             )
-            resp = self._lark_client.im.v1.message.create(request)
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(
+                None, lambda: self._lark_client.im.v1.message.create(request)
+            )
             if not resp.success():
                 logger.error(f"[FeishuBot] 发送卡片失败: {resp.msg}")
         except Exception as e:
