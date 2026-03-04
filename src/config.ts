@@ -21,6 +21,13 @@ export interface ClaudeConfig {
   max_tokens: number;
 }
 
+export interface BlackboxConfig {
+  api_key: string;
+  endpoint: string;
+  model: string;
+  timeout_ms: number;
+}
+
 export interface ProjectConfig {
   workspace_path: string;
   test_command: string;
@@ -41,6 +48,7 @@ export interface LoggingConfig {
 export interface AppConfig {
   feishu: FeishuConfig;
   claude: ClaudeConfig;
+  blackbox: BlackboxConfig;
   project: ProjectConfig;
   memory: MemoryConfig;
   logging: LoggingConfig;
@@ -63,6 +71,12 @@ export function loadConfig(configPath = 'config.toml'): AppConfig {
     claude: {
       model: parsed.claude?.model ?? 'claude-sonnet-4-6',
       max_tokens: parsed.claude?.max_tokens ?? 8192,
+    },
+    blackbox: {
+      api_key: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.api_key ?? process.env.BLACKBOX_API_KEY ?? '',
+      endpoint: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.endpoint ?? 'https://api.blackbox.ai/chat/completions',
+      model: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.model ?? 'deepseek-ai/DeepSeek-V3',
+      timeout_ms: (parsed.blackbox as Partial<BlackboxConfig> | undefined)?.timeout_ms ?? 10000,
     },
     project: {
       workspace_path: parsed.project?.workspace_path ?? '.',

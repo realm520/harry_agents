@@ -11,13 +11,12 @@ import { runDesign } from './agents/design_agent.js';
 import { runDev, runDevFix } from './agents/dev_agent.js';
 import { runTests, getFeedbackPath } from './agents/test_agent.js';
 import { runDeploy } from './agents/deploy_agent.js';
-import { runAgent } from './agents/base_agent.js';
 
 type IntentType = 'feature' | 'bug' | 'query' | 'invalid';
 
 const VALID_INTENTS = new Set<IntentType>(['feature', 'bug', 'query', 'invalid']);
 
-const INTENT_SYSTEM_PROMPT = `你是意图分类器。将用户消息分类为以下类别之一，只输出类别名称，不要有任何其他内容：
+const INTENT_SYSTEM_PROMPT = `你是意图分类器。将用户消息分类为以下类别之一：
 - feature：新功能需求或开发任务
 - bug：Bug修复、错误处理请求
 - query：查询任务状态、进度、结果
@@ -31,6 +30,7 @@ export class Orchestrator {
   private memory: MemoryManager;
   private state: StateMachine;
   private cwd: string;
+  private blackboxApiKey: string;
 
   constructor(cfg: AppConfig, notifyCallback?: NotifyCallback) {
     this.cfg = cfg;
@@ -38,6 +38,8 @@ export class Orchestrator {
     this.memory = new MemoryManager(cfg.memory.base_path, cfg.memory.recall_top_k);
     this.state = new StateMachine();
     this.cwd = cfg.project.workspace_path;
+    this.blackboxApiKey = cfg.blackbox.api_key;
+    if (!this.blackboxApiKey) console.warn('[Orchestrator] BLACKBOX_API_KEY 未配置，意图分类将失败');
   }
 
   // ── 对外接口 ──────────────────────────────────────────────────────── //
@@ -48,7 +50,14 @@ export class Orchestrator {
     userId: string,
     text: string,
   ): Promise<void> {
-    const intent = await this.classifyIntent(text);
+    let intent: IntentType;
+    try {
+      intent = await this.classifyIntent(text);
+    } catch (e) {
+      console.error(`[Orchestrator] 意图分类失败: ${e}`);
+      await this.notify(chatId, `⚠️ 意图识别暂时不可用，请稍后重试。`);
+      return;
+    }
     console.log(`[Orchestrator] 意图分类: ${intent} | 内容: ${text.slice(0, 80)}`);
 
     if (intent === 'invalid') {
@@ -240,21 +249,74 @@ export class Orchestrator {
   // ── 意图分类 ─────────────────────────────────────────────────────── //
 
   private async classifyIntent(text: string): Promise<IntentType> {
+    if (!this.blackboxApiKey) throw new Error('BLACKBOX_API_KEY 未配置');
+
+    const { endpoint, model, timeout_ms } = this.cfg.blackbox;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout_ms);
+
+    let res: Response;
     try {
-      const result = (await runAgent({
-        prompt: text,
-        systemPrompt: INTENT_SYSTEM_PROMPT,
-        allowedTools: [],
-      })).trim().toLowerCase() as IntentType;
-      return VALID_INTENTS.has(result) ? result : 'feature';
-    } catch (e) {
-      console.error('[Orchestrator] 意图分类失败，降级到正则:', e);
-      const t = text.trim();
-      if (t.length < 5) return 'invalid';
-      if (/查询|进度|状态/.test(t)) return 'query';
-      if (/bug|错误|报错|修复|fix/i.test(t)) return 'bug';
-      return 'feature';
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.blackboxApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: INTENT_SYSTEM_PROMPT },
+            { role: 'user', content: text },
+          ],
+          tools: [{
+            type: 'function',
+            function: {
+              name: 'set_intent',
+              description: '设置意图分类结果',
+              parameters: {
+                type: 'object',
+                properties: {
+                  intent: { type: 'string', enum: ['feature', 'bug', 'query', 'invalid'] },
+                },
+                required: ['intent'],
+              },
+            },
+          }],
+          tool_choice: { type: 'function', function: { name: 'set_intent' } },
+        }),
+      });
+    } finally {
+      clearTimeout(timer);
     }
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const err = await res.json() as { error?: { message?: string } };
+        detail = err.error?.message ?? detail;
+      } catch { /* ignore */ }
+      throw new Error(`Blackbox API 错误: ${detail}`);
+    }
+
+    const data = await res.json() as {
+      choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }>;
+    };
+    const raw = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    if (!raw) throw new Error('Blackbox API 返回结构异常：缺少 tool_calls.arguments');
+
+    let args: { intent?: string };
+    try {
+      args = JSON.parse(raw) as { intent?: string };
+    } catch {
+      throw new Error(`Blackbox API 返回的 arguments 不是合法 JSON: ${raw}`);
+    }
+
+    if (!VALID_INTENTS.has(args.intent as IntentType)) {
+      throw new Error(`Blackbox API 返回了非法意图值: ${args.intent}`);
+    }
+    return args.intent as IntentType;
   }
 
   private answerQuery(): string {
