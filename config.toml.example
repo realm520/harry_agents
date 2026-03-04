@@ -7,10 +7,12 @@ intake_chat_id = "oc_xxxxxxxxxxxxxxxxxxxxxx"
 notify_user_id = "ou_xxxxxxxxxxxxxxxxxxxxxx"
 verification_token = "xxxxxxxxxxxxxxxxxxxxxx"
 encrypt_key = ""
+# HTTP 服务器监听端口（需与 Lark 控制台填写的 URL 端口一致）
+port = 8765
 
 [claude]
 model = "claude-sonnet-4-6"
-# 可选 claude-opus-4-6（更强，更贵）
+# 可选 claude-opus-4-6（更强、更贵）
 max_tokens = 8192
 
 [project]
