@@ -12,7 +12,7 @@ export interface RunAgentOptions {
   prompt: string;
   systemPrompt: string;
   allowedTools: string[];
-  cwd: string;
+  cwd?: string;
 }
 
 /**

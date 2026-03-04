@@ -11,9 +11,17 @@ import { runDesign } from './agents/design_agent.js';
 import { runDev, runDevFix } from './agents/dev_agent.js';
 import { runTests, getFeedbackPath } from './agents/test_agent.js';
 import { runDeploy } from './agents/deploy_agent.js';
+import { runAgent } from './agents/base_agent.js';
 
-const QUERY_RE = /查询|进度|状态|怎么|什么|如何|帮我查|查一下/;
-const BUG_RE   = /bug|错误|报错|问题|修复|fix|崩溃|异常|失败/i;
+type IntentType = 'feature' | 'bug' | 'query' | 'invalid';
+
+const VALID_INTENTS = new Set<IntentType>(['feature', 'bug', 'query', 'invalid']);
+
+const INTENT_SYSTEM_PROMPT = `你是意图分类器。将用户消息分类为以下类别之一，只输出类别名称，不要有任何其他内容：
+- feature：新功能需求或开发任务
+- bug：Bug修复、错误处理请求
+- query：查询任务状态、进度、结果
+- invalid：问候、测试、无意义内容、太短的消息`;
 
 export type NotifyCallback = (chatId: string, text: string) => Promise<void>;
 
@@ -40,8 +48,13 @@ export class Orchestrator {
     userId: string,
     text: string,
   ): Promise<void> {
-    const intent = this.classifyIntent(text);
+    const intent = await this.classifyIntent(text);
     console.log(`[Orchestrator] 意图分类: ${intent} | 内容: ${text.slice(0, 80)}`);
+
+    if (intent === 'invalid') {
+      await this.notify(chatId, '👋 你好！请描述你的需求或 Bug，我会为你启动 AI 开发流水线。\n\n例如：\n• "实现用户登录功能"\n• "修复首页加载慢的问题"');
+      return;
+    }
 
     if (intent === 'query') {
       await this.notify(chatId, this.answerQuery());
@@ -226,10 +239,22 @@ export class Orchestrator {
 
   // ── 意图分类 ─────────────────────────────────────────────────────── //
 
-  private classifyIntent(text: string): string {
-    if (QUERY_RE.test(text)) return 'query';
-    if (BUG_RE.test(text)) return 'bug';
-    return 'feature';
+  private async classifyIntent(text: string): Promise<IntentType> {
+    try {
+      const result = (await runAgent({
+        prompt: text,
+        systemPrompt: INTENT_SYSTEM_PROMPT,
+        allowedTools: [],
+      })).trim().toLowerCase() as IntentType;
+      return VALID_INTENTS.has(result) ? result : 'feature';
+    } catch (e) {
+      console.error('[Orchestrator] 意图分类失败，降级到正则:', e);
+      const t = text.trim();
+      if (t.length < 5) return 'invalid';
+      if (/查询|进度|状态/.test(t)) return 'query';
+      if (/bug|错误|报错|修复|fix/i.test(t)) return 'bug';
+      return 'feature';
+    }
   }
 
   private answerQuery(): string {
