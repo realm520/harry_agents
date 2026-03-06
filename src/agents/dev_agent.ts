@@ -61,16 +61,20 @@ export async function runDevFix(
   taskId: string,
   cwd: string,
   backend: boolean,
+  memory?: AgentMemoryClient,
 ): Promise<void> {
-  const systemPrompt = loadSystemPrompt(getSystemPromptFile(backend), `dev_${backend ? 'backend' : 'frontend'}`);
+  const mode = backend ? 'backend' : 'frontend';
+  const systemPrompt = loadSystemPrompt(getSystemPromptFile(backend), `dev_${mode}`);
+  const outputPath = ensureOutputDir(getOutputPath(`dev-report-${mode}.md`, taskId));
 
   const prompt = `
 测试失败，请根据以下反馈修复代码：
 
 反馈文件：\`${feedbackPath}\`
 
-读取反馈文件，找到并修复对应的代码问题。修复完成后更新开发报告。
+读取反馈文件，找到并修复对应的代码问题。修复完成后更新开发报告 \`${outputPath}\`。
 `;
 
   await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
+  await storeAgentOutput(outputPath, memory, 'code', { taskId, module: mode });
 }
