@@ -16,6 +16,10 @@ export interface FeishuConfig {
   port: number;
 }
 
+/**
+ * 注意：claude-agent-sdk 使用 `claude login` 后的账户默认模型，
+ * 这里的 model / max_tokens 当前未传入 SDK，仅作文档记录。
+ */
 export interface ClaudeConfig {
   model: string;
   max_tokens: number;
@@ -63,6 +67,14 @@ export function validateConfig(cfg: AppConfig): void {
   if (errors.length > 0) {
     throw new Error(`[Config] 配置校验失败:\n${errors.map(e => `  - ${e}`).join('\n')}`);
   }
+
+  // 非致命性提示
+  const warn = (key: string, msg: string) =>
+    console.warn(`[Config] 警告：${key} 未配置，${msg}`);
+
+  if (!cfg.feishu.verification_token) warn('feishu.verification_token', '飞书请求将不做 token 校验（存在安全风险）');
+  if (!cfg.blackbox.api_key) warn('blackbox.api_key', '意图分类将降级为关键词匹配');
+  console.info('[Config] 提示：Memory API 需独立启动（默认 http://localhost:8000），未启动时自动降级为空上下文');
 }
 
 export function loadConfig(configPath = 'config.toml'): AppConfig {

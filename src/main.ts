@@ -3,16 +3,31 @@
  */
 
 import 'dotenv/config';
-import { mkdirSync } from 'fs';
+import { mkdirSync, createWriteStream } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, validateConfig } from './config.js';
 import { Orchestrator } from './orchestrator.js';
 import { FeishuBot } from './feishu_bot.js';
 
 function setupLogging(cfg: ReturnType<typeof loadConfig>): void {
-  mkdirSync(dirname(cfg.logging.file), { recursive: true });
-  // Node.js 用 console，生产环境可替换为 winston/pino
-  console.log(`[main] 日志级别: ${cfg.logging.level}, 文件: ${cfg.logging.file}`);
+  const logFile = cfg.logging.file;
+  mkdirSync(dirname(logFile), { recursive: true });
+
+  const stream = createWriteStream(logFile, { flags: 'a' });
+  stream.on('error', (err) => origError(`[main] 日志文件写入异常: ${err}`));
+
+  const fmt = (level: string, args: unknown[]): string =>
+    `${new Date().toISOString()} [${level}] ${args.map(String).join(' ')}\n`;
+
+  const origLog   = console.log.bind(console);
+  const origError = console.error.bind(console);
+  const origWarn  = console.warn.bind(console);
+
+  console.log = (...args) => { origLog(...args);   stream.write(fmt('INFO',  args)); };
+  console.error = (...args) => { origError(...args); stream.write(fmt('ERROR', args)); };
+  console.warn  = (...args) => { origWarn(...args);  stream.write(fmt('WARN',  args)); };
+
+  console.log(`[main] 日志级别: ${cfg.logging.level}, 文件: ${logFile}`);
 }
 
 function main(): void {
@@ -22,7 +37,7 @@ function main(): void {
 
   const bot = new FeishuBot(cfg);
 
-  const orchestrator = new Orchestrator(cfg, (chatId, text) => bot.sendText(chatId, text));
+  const orchestrator = new Orchestrator(cfg, (chatId, payload) => bot.handleNotify(chatId, payload));
   bot.setOrchestrator(orchestrator);
 
   console.log('='.repeat(60));
