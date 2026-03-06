@@ -85,7 +85,13 @@ export class FeishuBot {
       if (msg['message_type'] !== 'text') return;
 
       const contentStr = msg['content'] as string ?? '{}';
-      const contentDict = JSON.parse(contentStr) as { text?: string };
+      let contentDict: { text?: string } = {};
+      try {
+        contentDict = JSON.parse(contentStr) as { text?: string };
+      } catch {
+        console.warn(`[FeishuBot] 消息内容不是合法 JSON，已忽略: ${contentStr.slice(0, 100)}`);
+        return;
+      }
       const text = (contentDict.text ?? '').replace(RE_AT, '').trim();
       if (!text) return;
 
