@@ -32,7 +32,7 @@ const TRANSITIONS: Record<WorkflowState, WorkflowState[]> = {
   [WorkflowState.DEVELOPMENT]:    [WorkflowState.TESTING],
   [WorkflowState.TESTING]:        [WorkflowState.DEPLOY_CONFIRM, WorkflowState.DEVELOPMENT, WorkflowState.REVIEW],
   [WorkflowState.REVIEW]:         [WorkflowState.DEVELOPMENT, WorkflowState.FAILED],
-  [WorkflowState.DEPLOY_CONFIRM]: [WorkflowState.DEPLOYING, WorkflowState.DONE],
+  [WorkflowState.DEPLOY_CONFIRM]: [WorkflowState.DEPLOYING],
   [WorkflowState.DEPLOYING]:      [WorkflowState.DONE, WorkflowState.FAILED],
   [WorkflowState.DONE]:           [],
   [WorkflowState.FAILED]:         [],
@@ -48,6 +48,7 @@ export interface TaskContext {
   story_path: string | null;
   tech_spec_path: string | null;
   dev_report_path: string | null;
+  frontend_report_path: string | null;
   test_report_path: string | null;
   deploy_report_path: string | null;
   test_retry_count: number;
@@ -70,6 +71,7 @@ function newTaskContext(overrides: Partial<TaskContext> = {}): TaskContext {
     story_path: null,
     tech_spec_path: null,
     dev_report_path: null,
+    frontend_report_path: null,
     test_report_path: null,
     deploy_report_path: null,
     test_retry_count: 0,

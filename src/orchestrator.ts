@@ -146,7 +146,7 @@ export class Orchestrator {
         runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, true, this.memory),
         runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, false, this.memory),
       ]);
-      ctx = this.state.transition(ctx, WorkflowState.TESTING, { dev_report_path: beReport });
+      ctx = this.state.transition(ctx, WorkflowState.TESTING, { dev_report_path: beReport, frontend_report_path: feReport });
       await this.notify(
         ctx.feishu_chat_id,
         `✍️ [${ctx.task_id}] 代码实现完成\n- 后端报告: \`${beReport}\`\n- 前端报告: \`${feReport}\``,
@@ -214,7 +214,10 @@ export class Orchestrator {
         `⚠️ [${ctx.task_id}] 第 ${retry + 1} 轮测试失败，Dev Agent 正在修复...`,
       );
       ctx = this.state.transition(ctx, WorkflowState.DEVELOPMENT);
-      await runDevFix(feedbackPath, ctx.task_id, this.cwd, true);
+      await Promise.all([
+        runDevFix(feedbackPath, ctx.task_id, this.cwd, true, this.memory),
+        runDevFix(feedbackPath, ctx.task_id, this.cwd, false, this.memory),
+      ]);
       ctx = this.state.transition(ctx, WorkflowState.TESTING);
     }
   }
@@ -257,8 +260,19 @@ export class Orchestrator {
   // ── 意图分类 ─────────────────────────────────────────────────────── //
 
   private async classifyIntent(text: string): Promise<IntentType> {
-    if (!this.blackboxApiKey) throw new Error('BLACKBOX_API_KEY 未配置');
+    if (this.blackboxApiKey) {
+      try {
+        return await this.classifyByBlackbox(text);
+      } catch (e) {
+        console.warn(`[Orchestrator] Blackbox API 失败，降级为关键词匹配: ${e}`);
+      }
+    } else {
+      console.warn('[Orchestrator] BLACKBOX_API_KEY 未配置，使用关键词匹配兜底');
+    }
+    return this.classifyByKeywords(text);
+  }
 
+  private async classifyByBlackbox(text: string): Promise<IntentType> {
     const { endpoint, model, timeout_ms } = this.cfg.blackbox;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout_ms);
@@ -325,6 +339,16 @@ export class Orchestrator {
       throw new Error(`Blackbox API 返回了非法意图值: ${args.intent}`);
     }
     return args.intent as IntentType;
+  }
+
+  /** 关键词兜底分类，无需外部依赖 */
+  private classifyByKeywords(text: string): IntentType {
+    const t = text.toLowerCase();
+    if (t.length < 4) return 'invalid';
+    if (/修复|bug|报错|错误|崩溃|异常|失败|不对|问题/.test(t)) return 'bug';
+    if (/状态|进度|结果|查询|怎么样|完成了|多少|有没有/.test(t)) return 'query';
+    if (/实现|开发|新增|添加|功能|需求|做|帮我|支持|接入/.test(t)) return 'feature';
+    return 'invalid';
   }
 
   private answerQuery(): string {
