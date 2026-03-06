@@ -5,35 +5,46 @@ app_secret = "xxxxxxxxxxxxxxxxxxxxxx"
 intake_chat_id = "oc_xxxxxxxxxxxxxxxxxxxxxx"
 # 报警/确认通知的用户 open_id
 notify_user_id = "ou_xxxxxxxxxxxxxxxxxxxxxx"
+# 飞书事件验证 Token（推荐填写，防止伪造请求）
 verification_token = "xxxxxxxxxxxxxxxxxxxxxx"
 encrypt_key = ""
 # HTTP 服务器监听端口（需与 Lark 控制台填写的 URL 端口一致）
 port = 8765
 
 [claude]
+# claude-agent-sdk 使用 `claude login` 后的账户，此处 model 仅作文档说明
 model = "claude-sonnet-4-6"
 # 可选 claude-opus-4-6（更强、更贵）
 max_tokens = 8192
 
+# ── 意图分类（可选）────────────────────────────────────────────────────
+# 不配置时自动降级为关键词匹配，不影响流水线运行
+# 也可通过环境变量 BLACKBOX_API_KEY 设置 api_key
+[blackbox]
+api_key = ""
+endpoint = "https://api.blackbox.ai/chat/completions"
+model = "blackboxai/deepseek/deepseek-chat-v3-0324"
+# 请求超时（毫秒）
+timeout_ms = 10000
+
 [project]
-# 目标代码仓库的绝对路径（Dev/Test Agent 操作该目录）
+# 目标代码仓库的绝对路径（所有 Agent 均在此目录下操作代码）
 workspace_path = "/path/to/your/project"
-# 运行测试的命令（来自 Makefile）
+# 运行测试的命令（在 workspace_path 目录下执行）
 test_command = "make test"
-# 部署命令
+# 部署命令（在 workspace_path 目录下执行）
 deploy_command = "git push origin main"
-# 最大测试重试次数
+# 最大测试重试次数（超出后飞书报警等待人工）
 max_test_retries = 3
 
+# ── Memory API（可选）──────────────────────────────────────────────────
+# 本系统调用 http://localhost:8000 作为记忆后端
+# 未启动时自动降级为空上下文，不影响主流程
 [memory]
-# 记忆文件根目录
 base_path = "./memory"
-# ChromaDB 持久化目录
-chroma_path = "./memory/chroma"
-# 最多召回的记忆条数
 recall_top_k = 5
 
 [logging]
 level = "INFO"
-# 日志文件路径
+# 日志文件路径（相对于 multi-agent-system 目录）
 file = "./logs/agent.log"
