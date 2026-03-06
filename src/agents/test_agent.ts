@@ -2,7 +2,7 @@
  * Test Agent：运行测试，验证代码变更
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, parseResultMarker, storeAgentOutput } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, readOutputFile, parseResultMarker, storeAgentOutput } from './base_agent.js';
 import type { AgentMemoryClient } from '../memory_client.js';
 
 const SYSTEM_PROMPT_FILE = '.claude/agents/test.md';
@@ -20,8 +20,8 @@ export async function runTests(opts: {
 }): Promise<{ passed: boolean; reportPath: string }> {
   const { storyPath, devReportPath, testCommand, memoryContext, taskId, cwd, retryCount = 0, memory } = opts;
   const systemPrompt = loadSystemPrompt(SYSTEM_PROMPT_FILE, 'test');
-  const outputPath = ensureOutputDir(getOutputPath('test-report.md', taskId));
-  const feedbackPath = getOutputPath('test-feedback.md', taskId);
+  const outputPath = ensureOutputDir(getOutputPath('test-report.md', taskId, cwd));
+  const feedbackPath = getOutputPath('test-feedback.md', taskId, cwd);
 
   const prompt = `
 ## 你的任务
@@ -53,10 +53,11 @@ ${testCommand}
 请在报告末尾用 \`RESULT: PASS\` 或 \`RESULT: FAIL\` 标记最终结论。
 `;
 
-  const result = await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
-  const passed = parseResultMarker(outputPath, 'RESULT: PASS', result);
+  await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
+  const content = readOutputFile(outputPath);
+  const passed = parseResultMarker(content, 'RESULT: PASS');
   await storeAgentOutput(
-    outputPath, memory,
+    content, memory,
     passed ? 'ci_cd' : 'bug',
     { taskId, importance: passed ? undefined : 0.8 },
     1000,
@@ -64,6 +65,6 @@ ${testCommand}
   return { passed, reportPath: outputPath };
 }
 
-export function getFeedbackPath(taskId: string): string {
-  return getOutputPath('test-feedback.md', taskId);
+export function getFeedbackPath(taskId: string, cwd: string): string {
+  return getOutputPath('test-feedback.md', taskId, cwd);
 }

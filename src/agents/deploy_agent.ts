@@ -2,7 +2,7 @@
  * Deploy Agent：在获得人工确认后执行部署
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, parseResultMarker, storeAgentOutput } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, readOutputFile, parseResultMarker, storeAgentOutput } from './base_agent.js';
 import type { AgentMemoryClient } from '../memory_client.js';
 
 const SYSTEM_PROMPT_FILE = '.claude/agents/deploy.md';
@@ -23,7 +23,7 @@ export async function runDeploy(opts: {
   }
 
   const systemPrompt = loadSystemPrompt(SYSTEM_PROMPT_FILE, 'deploy');
-  const outputPath = ensureOutputDir(getOutputPath('deploy-report.md', taskId));
+  const outputPath = ensureOutputDir(getOutputPath('deploy-report.md', taskId, cwd));
 
   const prompt = `
 ## 你的任务
@@ -45,8 +45,9 @@ export async function runDeploy(opts: {
 部署完成后在报告末尾用 \`DEPLOY: SUCCESS\` 或 \`DEPLOY: FAILED\` 标记结论。
 `;
 
-  const result = await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
-  const success = parseResultMarker(outputPath, 'DEPLOY: SUCCESS', result);
-  await storeAgentOutput(outputPath, memory, 'ci_cd', { taskId, importance: success ? 0.7 : 0.9 }, 1000);
+  await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
+  const content = readOutputFile(outputPath);
+  const success = parseResultMarker(content, 'DEPLOY: SUCCESS');
+  await storeAgentOutput(content, memory, 'ci_cd', { taskId, importance: success ? 0.7 : 0.9 }, 1000);
   return { success, reportPath: outputPath };
 }

@@ -2,7 +2,7 @@
  * Design Agent：根据 Story 生成技术方案
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, storeAgentOutput } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, readOutputFile, storeAgentOutput } from './base_agent.js';
 import type { AgentMemoryClient } from '../memory_client.js';
 
 const SYSTEM_PROMPT_FILE = '.claude/agents/design.md';
@@ -16,7 +16,7 @@ export async function runDesign(
   memory?: AgentMemoryClient,
 ): Promise<string> {
   const systemPrompt = loadSystemPrompt(SYSTEM_PROMPT_FILE, 'design');
-  const outputPath = ensureOutputDir(getOutputPath('tech-spec.md', taskId));
+  const outputPath = ensureOutputDir(getOutputPath('tech-spec.md', taskId, cwd));
 
   const prompt = `
 ## 你的任务
@@ -47,6 +47,6 @@ ${memoryContext || '（暂无相关记忆）'}
 `;
 
   await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
-  await storeAgentOutput(outputPath, memory, 'arch', { taskId });
+  await storeAgentOutput(readOutputFile(outputPath), memory, 'arch', { taskId });
   return outputPath;
 }

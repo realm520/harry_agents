@@ -2,7 +2,7 @@
  * Dev Agent：根据技术方案实现代码（前端/后端）
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, storeAgentOutput } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, readOutputFile, storeAgentOutput } from './base_agent.js';
 import type { AgentMemoryClient } from '../memory_client.js';
 
 const ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
@@ -21,7 +21,7 @@ export async function runDev(
 ): Promise<string> {
   const mode = backend ? 'backend' : 'frontend';
   const systemPrompt = loadSystemPrompt(getSystemPromptFile(backend), `dev_${mode}`);
-  const outputPath = ensureOutputDir(getOutputPath(`dev-report-${mode}.md`, taskId));
+  const outputPath = ensureOutputDir(getOutputPath(`dev-report-${mode}.md`, taskId, cwd));
 
   const prompt = `
 ## 你的任务
@@ -52,7 +52,7 @@ ${memoryContext || '（暂无相关记忆）'}
 `;
 
   await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
-  await storeAgentOutput(outputPath, memory, 'code', { taskId, module: mode });
+  await storeAgentOutput(readOutputFile(outputPath), memory, 'code', { taskId, module: mode });
   return outputPath;
 }
 
@@ -65,7 +65,7 @@ export async function runDevFix(
 ): Promise<void> {
   const mode = backend ? 'backend' : 'frontend';
   const systemPrompt = loadSystemPrompt(getSystemPromptFile(backend), `dev_${mode}`);
-  const outputPath = ensureOutputDir(getOutputPath(`dev-report-${mode}.md`, taskId));
+  const outputPath = ensureOutputDir(getOutputPath(`dev-report-${mode}.md`, taskId, cwd));
 
   const prompt = `
 测试失败，请根据以下反馈修复代码：
@@ -76,5 +76,5 @@ export async function runDevFix(
 `;
 
   await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
-  await storeAgentOutput(outputPath, memory, 'code', { taskId, module: mode });
+  await storeAgentOutput(readOutputFile(outputPath), memory, 'code', { taskId, module: mode });
 }

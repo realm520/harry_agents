@@ -2,7 +2,7 @@
  * PM Agent：将原始需求转化为结构化 Story
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, storeAgentOutput } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, readOutputFile, storeAgentOutput } from './base_agent.js';
 import type { AgentMemoryClient } from '../memory_client.js';
 
 const SYSTEM_PROMPT_FILE = '.claude/agents/pm.md';
@@ -16,7 +16,7 @@ export async function analyzePM(
   memory?: AgentMemoryClient,
 ): Promise<string> {
   const systemPrompt = loadSystemPrompt(SYSTEM_PROMPT_FILE, 'pm');
-  const outputPath = ensureOutputDir(getOutputPath('story.md', taskId));
+  const outputPath = ensureOutputDir(getOutputPath('story.md', taskId, cwd));
 
   const prompt = `
 ## 你的任务
@@ -42,6 +42,6 @@ ${memoryContext || '（暂无相关记忆）'}
 `;
 
   await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
-  await storeAgentOutput(outputPath, memory, 'prd', { taskId });
+  await storeAgentOutput(readOutputFile(outputPath), memory, 'prd', { taskId });
   return outputPath;
 }

@@ -6,7 +6,7 @@
 
 import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { readFileSync, mkdirSync } from 'fs';
-import { dirname, parse as parsePath } from 'path';
+import { dirname, parse as parsePath, resolve } from 'path';
 import type { AgentMemoryClient, MemoryType } from '../memory_client.js';
 
 export interface RunAgentOptions {
@@ -51,14 +51,19 @@ export function loadSystemPrompt(promptFile: string, agentName: string): string 
   }
 }
 
-/**
- * 生成标准输出路径
- */
-export function getOutputPath(filename: string, taskId: string): string {
-  if (taskId) return `./work/${taskId}/${filename}`;
+function datestampedRelPath(filename: string): string {
   const today = new Date().toISOString().slice(0, 10);
   const { name, ext } = parsePath(filename);
-  return `./work/${name}-${today}${ext}`;
+  return `work/${name}-${today}${ext}`;
+}
+
+/**
+ * 生成标准输出路径（绝对路径）。
+ * cwd 应传入 workspace_path，确保 node 进程与 Agent 子进程读写同一位置。
+ */
+export function getOutputPath(filename: string, taskId: string, cwd: string): string {
+  const rel = taskId ? `work/${taskId}/${filename}` : datestampedRelPath(filename);
+  return resolve(cwd, rel);
 }
 
 /**
@@ -70,30 +75,36 @@ export function ensureOutputDir(filePath: string): string {
 }
 
 /**
- * 从输出文件或 fallback 文本中查找成功标记
+ * 尝试读取 Agent 输出文件，失败时返回 fallback 文本。
  */
-export function parseResultMarker(outputPath: string, marker: string, fallbackText: string): boolean {
+export function readOutputFile(outputPath: string, fallback = ''): string {
   try {
-    const content = readFileSync(outputPath, 'utf-8');
-    return content.includes(marker);
+    return readFileSync(outputPath, 'utf-8');
   } catch {
-    return fallbackText.includes(marker);
+    return fallback;
   }
 }
 
 /**
- * 读取 Agent 输出文件并存入 Memory API（失败时静默忽略）
+ * 在 content 中查找成功标记。
+ */
+export function parseResultMarker(content: string, marker: string): boolean {
+  return content.includes(marker);
+}
+
+/**
+ * 将 content 存入 Memory API（失败时静默忽略）。
+ * content 由调用方通过 readOutputFile() 获取，避免重复读文件。
  */
 export async function storeAgentOutput(
-  outputPath: string,
+  content: string,
   memory: AgentMemoryClient | undefined,
   memoryType: MemoryType,
   opts?: { taskId?: string; module?: string; importance?: number },
   maxChars = 2000,
 ): Promise<void> {
-  if (!memory) return;
+  if (!memory || !content) return;
   try {
-    const content = readFileSync(outputPath, 'utf-8');
     await memory.store(content.slice(0, maxChars), memoryType, opts);
   } catch (e) {
     console.warn(`[Agent] 存储 ${memoryType} 记忆失败: ${e}`);

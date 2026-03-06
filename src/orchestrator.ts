@@ -222,7 +222,7 @@ export class Orchestrator {
         return;
       }
 
-      const feedbackPath = getFeedbackPath(ctx.task_id);
+      const feedbackPath = getFeedbackPath(ctx.task_id, this.cwd);
       await this.text(
         ctx.feishu_chat_id,
         `⚠️ [${ctx.task_id}] 第 ${retry + 1} 轮测试失败，Dev Agent 正在修复...`,
