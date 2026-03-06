@@ -6,7 +6,7 @@
 import express from 'express';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { AppConfig } from './config.js';
-import type { Orchestrator } from './orchestrator.js';
+import type { Orchestrator, NotifyPayload } from './orchestrator.js';
 
 const RE_DEPLOY = /^\/deploy\s+(\S+)/i;
 const RE_CANCEL = /^\/cancel\s+(\S+)\s*(.*)/i;
@@ -57,19 +57,58 @@ export class FeishuBot {
     try {
       const body = req.body as Record<string, unknown>;
 
-      // URL 验证
+      // URL 验证（握手阶段，跳过 token 校验）
       if (body['type'] === 'url_verification') {
         res.json({ challenge: body['challenge'] });
         return;
       }
 
-      // 消息事件
       const header = body['header'] as Record<string, unknown> | undefined;
-      if (header?.['event_type'] === 'im.message.receive_v1') {
+
+      // verification_token 校验（飞书在 header.token 中下发）
+      if (this.cfg.feishu.verification_token) {
+        const token = header?.['token'] as string | undefined;
+        if (token !== this.cfg.feishu.verification_token) {
+          console.warn('[FeishuBot] 非法请求：token 验证失败，已拒绝');
+          res.status(403).json({});
+          return;
+        }
+      }
+
+      const eventType = header?.['event_type'] as string | undefined;
+
+      // 消息事件
+      if (eventType === 'im.message.receive_v1') {
         const event = body['event'] as Record<string, unknown>;
         this.handleMessageEvent(event).catch(e =>
           console.error(`[FeishuBot] 消息处理异常: ${e}`),
         );
+        res.json({});
+        return;
+      }
+
+      // 卡片按钮点击事件
+      if (eventType === 'card.action.trigger') {
+        const event = body['event'] as Record<string, unknown>;
+        const actionValue = (event['action'] as Record<string, unknown> | undefined)
+          ?.['value'] as { action?: string; task_id?: string } | undefined;
+        const operator = event['operator'] as Record<string, unknown> | undefined;
+        const userId = (operator?.['open_id'] as string | undefined) ?? '';
+
+        if (actionValue?.action === 'deploy' && actionValue.task_id) {
+          this.orchestrator?.confirmDeploy(actionValue.task_id, userId).catch(e =>
+            console.error(`[FeishuBot] 卡片部署确认异常: ${e}`),
+          );
+          res.json({ toast: { type: 'success', content: '部署已确认，正在执行...' } });
+        } else if (actionValue?.action === 'cancel' && actionValue.task_id) {
+          this.orchestrator?.rejectTask(actionValue.task_id, '用户通过卡片取消').catch(e =>
+            console.error(`[FeishuBot] 卡片取消异常: ${e}`),
+          );
+          res.json({ toast: { type: 'info', content: '任务已取消' } });
+        } else {
+          res.json({});
+        }
+        return;
       }
 
       res.json({});
@@ -149,6 +188,16 @@ export class FeishuBot {
     await this.orchestrator.handleFeishuMessage(chatId, messageId, senderId, text);
   }
 
+  // ── NotifyCallback：Orchestrator 调用的统一通知入口 ─────────────── //
+
+  async handleNotify(chatId: string, payload: NotifyPayload): Promise<void> {
+    if (payload.kind === 'text') {
+      await this.sendText(chatId, payload.text);
+    } else {
+      await this.sendDeployConfirmCard(chatId, payload.taskId, payload.summary);
+    }
+  }
+
   // ── 发送消息 ─────────────────────────────────────────────────────── //
 
   private async sendMessage(chatId: string, msgType: string, content: unknown): Promise<void> {
@@ -207,6 +256,11 @@ export class FeishuBot {
       await this.sendMessage(chatId, 'interactive', card);
     } catch (e) {
       console.error(`[FeishuBot] 发送卡片异常: ${e}`);
+      // 降级为文本
+      await this.sendText(
+        chatId,
+        `✅ [${taskId}] 测试通过！\n${summary}\n\n• 确认部署：\`/deploy ${taskId}\`\n• 取消：\`/cancel ${taskId}\``,
+      );
     }
   }
 }
