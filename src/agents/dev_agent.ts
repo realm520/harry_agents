@@ -2,7 +2,8 @@
  * Dev Agent：根据技术方案实现代码（前端/后端）
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, storeAgentOutput } from './base_agent.js';
+import type { AgentMemoryClient } from '../memory_client.js';
 
 const ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
 
@@ -16,6 +17,7 @@ export async function runDev(
   taskId: string,
   cwd: string,
   backend: boolean,
+  memory?: AgentMemoryClient,
 ): Promise<string> {
   const mode = backend ? 'backend' : 'frontend';
   const systemPrompt = loadSystemPrompt(getSystemPromptFile(backend), `dev_${mode}`);
@@ -50,6 +52,7 @@ ${memoryContext || '（暂无相关记忆）'}
 `;
 
   await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
+  await storeAgentOutput(outputPath, memory, 'code', { taskId, module: mode });
   return outputPath;
 }
 

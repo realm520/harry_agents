@@ -7,6 +7,7 @@
 import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { readFileSync, mkdirSync } from 'fs';
 import { dirname, parse as parsePath } from 'path';
+import type { AgentMemoryClient, MemoryType } from '../memory_client.js';
 
 export interface RunAgentOptions {
   prompt: string;
@@ -77,5 +78,24 @@ export function parseResultMarker(outputPath: string, marker: string, fallbackTe
     return content.includes(marker);
   } catch {
     return fallbackText.includes(marker);
+  }
+}
+
+/**
+ * 读取 Agent 输出文件并存入 Memory API（失败时静默忽略）
+ */
+export async function storeAgentOutput(
+  outputPath: string,
+  memory: AgentMemoryClient | undefined,
+  memoryType: MemoryType,
+  opts?: { taskId?: string; module?: string; importance?: number },
+  maxChars = 2000,
+): Promise<void> {
+  if (!memory) return;
+  try {
+    const content = readFileSync(outputPath, 'utf-8');
+    await memory.store(content.slice(0, maxChars), memoryType, opts);
+  } catch (e) {
+    console.warn(`[Agent] 存储 ${memoryType} 记忆失败: ${e}`);
   }
 }

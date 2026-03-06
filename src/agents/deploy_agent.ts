@@ -2,7 +2,8 @@
  * Deploy Agent：在获得人工确认后执行部署
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, parseResultMarker } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, parseResultMarker, storeAgentOutput } from './base_agent.js';
+import type { AgentMemoryClient } from '../memory_client.js';
 
 const SYSTEM_PROMPT_FILE = '.claude/agents/deploy.md';
 const ALLOWED_TOOLS = ['Read', 'Write', 'Bash'];
@@ -13,8 +14,9 @@ export async function runDeploy(opts: {
   taskId: string;
   cwd: string;
   confirmed: boolean;
+  memory?: AgentMemoryClient;
 }): Promise<{ success: boolean; reportPath: string }> {
-  const { testReportPath, deployCommand, taskId, cwd, confirmed } = opts;
+  const { testReportPath, deployCommand, taskId, cwd, confirmed, memory } = opts;
 
   if (!confirmed) {
     throw new Error('[DeployAgent] 部署未经人工确认，拒绝执行');
@@ -45,5 +47,6 @@ export async function runDeploy(opts: {
 
   const result = await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
   const success = parseResultMarker(outputPath, 'DEPLOY: SUCCESS', result);
+  await storeAgentOutput(outputPath, memory, 'ci_cd', { taskId, importance: success ? 0.7 : 0.9 }, 1000);
   return { success, reportPath: outputPath };
 }

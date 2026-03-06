@@ -2,7 +2,8 @@
  * Test Agent：运行测试，验证代码变更
  */
 
-import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, parseResultMarker } from './base_agent.js';
+import { runAgent, loadSystemPrompt, getOutputPath, ensureOutputDir, parseResultMarker, storeAgentOutput } from './base_agent.js';
+import type { AgentMemoryClient } from '../memory_client.js';
 
 const SYSTEM_PROMPT_FILE = '.claude/agents/test.md';
 const ALLOWED_TOOLS = ['Read', 'Write', 'Bash', 'Glob'];
@@ -15,8 +16,9 @@ export async function runTests(opts: {
   taskId: string;
   cwd: string;
   retryCount?: number;
+  memory?: AgentMemoryClient;
 }): Promise<{ passed: boolean; reportPath: string }> {
-  const { storyPath, devReportPath, testCommand, memoryContext, taskId, cwd, retryCount = 0 } = opts;
+  const { storyPath, devReportPath, testCommand, memoryContext, taskId, cwd, retryCount = 0, memory } = opts;
   const systemPrompt = loadSystemPrompt(SYSTEM_PROMPT_FILE, 'test');
   const outputPath = ensureOutputDir(getOutputPath('test-report.md', taskId));
   const feedbackPath = getOutputPath('test-feedback.md', taskId);
@@ -53,6 +55,12 @@ ${testCommand}
 
   const result = await runAgent({ prompt, systemPrompt, allowedTools: ALLOWED_TOOLS, cwd });
   const passed = parseResultMarker(outputPath, 'RESULT: PASS', result);
+  await storeAgentOutput(
+    outputPath, memory,
+    passed ? 'ci_cd' : 'bug',
+    { taskId, importance: passed ? undefined : 0.8 },
+    1000,
+  );
   return { passed, reportPath: outputPath };
 }
 

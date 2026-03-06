@@ -3,7 +3,7 @@
  * 编排 PM → Design → Dev → Test → Deploy 流水线
  */
 
-import { MemoryManager } from './memory_manager.js';
+import { AgentMemoryClient } from './memory_client.js';
 import { StateMachine, WorkflowState, TaskContext } from './state_machine.js';
 import { AppConfig } from './config.js';
 import { analyzePM } from './agents/pm_agent.js';
@@ -27,7 +27,7 @@ export type NotifyCallback = (chatId: string, text: string) => Promise<void>;
 export class Orchestrator {
   private cfg: AppConfig;
   private notify: NotifyCallback;
-  private memory: MemoryManager;
+  private memory: AgentMemoryClient;
   private state: StateMachine;
   private cwd: string;
   private blackboxApiKey: string;
@@ -35,7 +35,7 @@ export class Orchestrator {
   constructor(cfg: AppConfig, notifyCallback?: NotifyCallback) {
     this.cfg = cfg;
     this.notify = notifyCallback ?? this.defaultNotify.bind(this);
-    this.memory = new MemoryManager(cfg.memory.base_path, cfg.memory.recall_top_k);
+    this.memory = new AgentMemoryClient();
     this.state = new StateMachine();
     this.cwd = cfg.project.workspace_path;
     this.blackboxApiKey = cfg.blackbox.api_key;
@@ -121,17 +121,19 @@ export class Orchestrator {
 
   private async runPipeline(ctx: TaskContext): Promise<void> {
     try {
-      const memoryCtx = this.memory.recall(ctx.original_request);
+      const memoryCtx = await this.memory.buildContext(ctx.original_request);
 
       // ── PLANNING ──────────────────────────────────────────────────
       ctx = this.state.transition(ctx, WorkflowState.PLANNING);
       await this.notify(ctx.feishu_chat_id, `📋 [${ctx.task_id}] PM Agent 正在分析需求...`);
-      const storyPath = await analyzePM(ctx.original_request, memoryCtx, ctx.task_id, this.cwd);
+      void this.memory.setWorking('pm_agent', { taskId: ctx.task_id, status: 'running' });
+      const storyPath = await analyzePM(ctx.original_request, memoryCtx, ctx.task_id, this.cwd, this.memory);
       ctx = this.state.transition(ctx, WorkflowState.DESIGN, { story_path: storyPath });
 
       // ── DESIGN ────────────────────────────────────────────────────
       await this.notify(ctx.feishu_chat_id, `🏗️ [${ctx.task_id}] Design Agent 正在设计技术方案...`);
-      const techSpecPath = await runDesign(storyPath, memoryCtx, ctx.task_id, this.cwd);
+      void this.memory.setWorking('design_agent', { taskId: ctx.task_id, status: 'running', storyPath });
+      const techSpecPath = await runDesign(storyPath, memoryCtx, ctx.task_id, this.cwd, this.memory);
       ctx = this.state.transition(ctx, WorkflowState.DEVELOPMENT, { tech_spec_path: techSpecPath });
       await this.notify(
         ctx.feishu_chat_id,
@@ -139,9 +141,10 @@ export class Orchestrator {
       );
 
       // ── DEVELOPMENT ───────────────────────────────────────────────
+      void this.memory.setWorking('dev_agent', { taskId: ctx.task_id, status: 'running', techSpecPath });
       const [beReport, feReport] = await Promise.all([
-        runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, true),
-        runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, false),
+        runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, true, this.memory),
+        runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, false, this.memory),
       ]);
       ctx = this.state.transition(ctx, WorkflowState.TESTING, { dev_report_path: beReport });
       await this.notify(
@@ -175,6 +178,7 @@ export class Orchestrator {
         taskId: ctx.task_id,
         cwd: this.cwd,
         retryCount: retry,
+        memory: this.memory,
       });
       ctx = this.state.transition(ctx, WorkflowState.TESTING, { test_report_path: reportPath });
 
@@ -184,9 +188,11 @@ export class Orchestrator {
           `✅ [${ctx.task_id}] 测试全部通过！\n\n是否部署到生产？请回复：\n• **确认部署** \`/deploy ${ctx.task_id}\`\n• **取消** \`/cancel ${ctx.task_id}\``,
         );
         ctx = this.state.transition(ctx, WorkflowState.DEPLOY_CONFIRM);
-        this.memory.writeDailyLog(
-          'orchestrator',
+        void this.memory.reflect(ctx.task_id);
+        void this.memory.store(
           `任务 ${ctx.task_id} 测试通过，等待部署确认。需求：${ctx.original_request.slice(0, 100)}`,
+          'episodic',
+          { taskId: ctx.task_id },
         );
         return;
       }
@@ -222,6 +228,7 @@ export class Orchestrator {
         taskId: ctx.task_id,
         cwd: this.cwd,
         confirmed: true,
+        memory: this.memory,
       });
       if (success) {
         this.state.transition(ctx, WorkflowState.DONE, { deploy_report_path: reportPath });
@@ -229,9 +236,10 @@ export class Orchestrator {
           ctx.feishu_chat_id,
           `🎉 [${ctx.task_id}] 部署成功！\n需求「${ctx.original_request.slice(0, 60)}...」已上线。`,
         );
-        this.memory.writeDailyLog(
-          'orchestrator',
+        void this.memory.store(
           `任务 ${ctx.task_id} 部署成功。需求：${ctx.original_request.slice(0, 100)}`,
+          'ci_cd',
+          { taskId: ctx.task_id },
         );
       } else {
         this.state.failTask(ctx, '部署失败');
