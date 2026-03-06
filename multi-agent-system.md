@@ -130,55 +130,62 @@
 
 ## 技术实现方案
 
+> **当前实现**：TypeScript（Node.js）+ `@anthropic-ai/claude-agent-sdk`
+
 ### 核心框架
 
-```python
-# orchestrator.py
-from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
+```typescript
+// src/agents/base_agent.ts
+import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-AGENTS = {
-    "pm": AgentDefinition(
-        description="产品需求分析，将用户需求转化为结构化Story",
-        prompt=open(".claude/agents/pm.md").read(),
-        tools=["Read", "Write", "Glob"],
-    ),
-    "design": AgentDefinition(
-        description="技术架构设计，分析代码影响范围",
-        prompt=open(".claude/agents/design.md").read(),
-        tools=["Read", "Glob", "Grep", "Write"],
-    ),
-    "dev-backend": AgentDefinition(
-        description="后端Go代码实现",
-        prompt=open(".claude/agents/server.md").read(),
-        tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-    ),
-    "dev-frontend": AgentDefinition(
-        description="前端Next.js代码实现",
-        prompt=open(".claude/agents/web.md").read(),
-        tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-    ),
-    "test": AgentDefinition(
-        description="运行测试，验证变更",
-        prompt=open(".claude/agents/test.md").read(),
-        tools=["Read", "Write", "Bash", "Glob"],
-    ),
+export async function runAgent(opts: RunAgentOptions): Promise<string> {
+  let result = '';
+  for await (const message of query({
+    prompt: opts.prompt,
+    options: {
+      cwd: opts.cwd,
+      allowedTools: opts.allowedTools,
+      systemPrompt: opts.systemPrompt,
+      permissionMode: 'acceptEdits',  // 自动接受文件编辑
+    },
+  })) {
+    const msg = message as SDKMessage;
+    if (msg.type === 'result') {
+      result = (msg as { type: 'result'; result: string }).result;
+    }
+  }
+  return result;
 }
-
-async def run_pipeline(user_id: str, request: str):
-    # 1. 注入相关记忆
-    memory_ctx = memory.recall(request)
-
-    # 2. Orchestrator 编排
-    async for msg in query(
-        prompt=f"<memory>{memory_ctx}</memory>\n用户请求：{request}",
-        options=ClaudeAgentOptions(
-            allowed_tools=["Read", "Task"],  # Task 工具调用子 agent
-            agents=AGENTS,
-            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
-        ),
-    ):
-        yield msg
 ```
+
+```typescript
+// src/orchestrator.ts（核心流水线）
+async runPipeline(ctx: TaskContext): Promise<void> {
+  const memoryCtx = this.memory.recall(ctx.original_request);
+
+  // PM → Design → Dev（前后端并行）→ Test（带重试）→ Deploy 确认
+  const storyPath = await analyzePM(ctx.original_request, memoryCtx, ctx.task_id, this.cwd);
+  const techSpecPath = await runDesign(storyPath, memoryCtx, ctx.task_id, this.cwd);
+
+  // 前后端并行开发
+  const [beReport, feReport] = await Promise.all([
+    runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, true),   // 后端
+    runDev(techSpecPath, memoryCtx, ctx.task_id, this.cwd, false),  // 前端
+  ]);
+
+  await this.runTestingLoop(ctx, memoryCtx);  // 最多重试 3 次
+}
+```
+
+### 意图分类（Blackbox API）
+
+意图分类使用 Blackbox API（deepseek-chat-v3），不走 Claude：
+- `feature` → 启动完整开发流水线
+- `bug` → 启动 Bug 修复流水线
+- `query` → 返回当前活跃任务列表
+- `invalid` → 引导用户正确使用
+
+需配置 `BLACKBOX_API_KEY` 环境变量或 `config.toml` 的 `[blackbox]` 段。
 
 ### Agent 系统提示（关键设计）
 
@@ -204,10 +211,11 @@ memory/
 │   └── db-migration.md
 ├── bugs/                 # 已知Bug和解法
 │   └── wallet-race-condition.md
-├── daily/                # 每日任务日志
-│   └── 2026-03-03.md
-└── chroma/               # 向量嵌入（ChromaDB）
+└── daily/                # 每日任务日志
+    └── 2026-03-03.md
 ```
+
+> 注：当前实现使用关键词匹配召回记忆（`memory_manager.ts`），不依赖 ChromaDB。
 
 **所有 agent 共享同一个记忆层，但写入权限分级：**
 
@@ -252,16 +260,31 @@ memory/
 ## 部署方案
 
 ```
-lark-agent-system/
-├── orchestrator.py       # 主程序，飞书长连接 + agent 编排
-├── memory_manager.py     # 记忆读写
-├── state_machine.py      # 工作流状态持久化
-├── config.toml           # 飞书 credentials + 项目路径
-├── .claude/agents/       # 各 agent 系统提示（复用现有）
-└── requirements.txt      # lark-oapi-sdk, claude-agent-sdk, chromadb
+multi-agent-system/
+├── src/
+│   ├── main.ts              # 主入口
+│   ├── orchestrator.ts      # 流水线编排 + 意图分类（Blackbox API）
+│   ├── feishu_bot.ts        # 飞书 HTTP 推送集成（express）
+│   ├── config.ts            # 配置加载
+│   ├── state_machine.ts     # 工作流状态持久化（JSON）
+│   ├── memory_manager.ts    # 共享记忆层（关键词匹配）
+│   └── agents/
+│       ├── base_agent.ts    # runAgent() 封装
+│       ├── pm_agent.ts
+│       ├── design_agent.ts
+│       ├── dev_agent.ts     # 前后端并行
+│       ├── test_agent.ts
+│       └── deploy_agent.ts
+├── config.toml              # 飞书 credentials + 项目路径
+├── package.json             # @anthropic-ai/claude-agent-sdk, @larksuiteoapi/node-sdk
+├── .claude/agents/          # 各 agent 系统提示（*.md）
+├── memory/                  # 共享记忆文件（facts.md, decisions/, patterns/, bugs/）
+└── states/                  # 任务状态 JSON 文件
 ```
 
-守护进程：systemd 24/7，飞书 WebSocket 长连自动重连。
+启动：`npm start`（`tsx src/main.ts`）
+认证：`claude login` OAuth，无需 `ANTHROPIC_API_KEY`
+意图分类：需设置 `BLACKBOX_API_KEY` 环境变量
 
 ---
 
