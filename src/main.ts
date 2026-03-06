@@ -5,7 +5,7 @@
 import 'dotenv/config';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { loadConfig } from './config.js';
+import { loadConfig, validateConfig } from './config.js';
 import { Orchestrator } from './orchestrator.js';
 import { FeishuBot } from './feishu_bot.js';
 
@@ -17,6 +17,7 @@ function setupLogging(cfg: ReturnType<typeof loadConfig>): void {
 
 function main(): void {
   const cfg = loadConfig('config.toml');
+  validateConfig(cfg);
   setupLogging(cfg);
 
   const bot = new FeishuBot(cfg);

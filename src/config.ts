@@ -54,6 +54,17 @@ export interface AppConfig {
   logging: LoggingConfig;
 }
 
+/** 启动时校验必填配置，缺失则 fail-fast */
+export function validateConfig(cfg: AppConfig): void {
+  const errors: string[] = [];
+  if (!cfg.feishu.app_id) errors.push('feishu.app_id 不能为空');
+  if (!cfg.feishu.app_secret) errors.push('feishu.app_secret 不能为空');
+  if (!cfg.project.workspace_path) errors.push('project.workspace_path 不能为空');
+  if (errors.length > 0) {
+    throw new Error(`[Config] 配置校验失败:\n${errors.map(e => `  - ${e}`).join('\n')}`);
+  }
+}
+
 export function loadConfig(configPath = 'config.toml'): AppConfig {
   const raw = readFileSync(configPath, 'utf-8');
   const parsed = parse(raw) as unknown as Partial<AppConfig>;
